@@ -1,64 +1,60 @@
-# Mask audit: which inspector catches which segmentation error?
+# Which segmentation-mask errors does a simple check catch, and which does it miss?
 
-**Question.** Given a (MRI, segmentation mask) pair, can an automatic inspector tell that the mask is wrong, and which kinds of errors does it miss?
-This is the image version of a data-QC loop: inject errors with known ground truth, score each inspector, then look at *which* errors slip through.
+A small audit loop: take MRI segmentation masks that are assumed correct, damage them in three known ways at two known sizes, run two simple automatic checks, and report how well each separates damaged from undamaged masks. The point is the list of blind spots.
+Design, written before the run (including numeric predictions): [DESIGN.md](DESIGN.md).
 
-**Data.** Medical Segmentation Decathlon, Task04 Hippocampus (CC-BY-SA 4.0), 260 cases, anterior+posterior labels merged into one binary mask. Public data only. Not clinical; this is a method demo.
+**Data.** Medical Segmentation Decathlon, Task04 Hippocampus (CC-BY-SA 4.0), 260 cases, anterior + posterior labels merged into one binary mask. Public data; method demo only, no clinical claim.
 
-**Errors injected** (severity 1-3 voxels): `erode`, `dilate`, `shift`, `drop_slab` (remove a slab at one end), `spurious_blob` (extra separate island).
+## What was done
+- **Damage, size set by overlap (Dice) with the clean mask, 0.9 and 0.8.** Each case gets its own parameter by bisection; the target was hit within 0.01 for 100% of 60 pilot cases (`pilot_damage.py`).
+  - *wrong size*: smoothed mask thresholded up (too small) or down (too big); volume -18% / -33% or +22% / +50% at Dice 0.9 / 0.8
+  - *shift*: mask moved in a random direction (volume about -3%)
+  - *extra island*: a separate ball away from the structure; volume +22% / +50% (the 0.8 island is half the structure, which is extreme)
+- **Two checks**, calibrated on clean masks of cases 0-99 (no labels learned):
+  - *volume only* (never sees the image): distance of the mask volume from normal; the population volume spread is 13%
+  - *image check*: larger of (a) how abnormal the image edge strength along the mask boundary is (two-sided) and (b) 3 x (connected pieces - 1)
+- **Test:** cases 100-259 (160), each gives one clean and one damaged version per (error, size). AUROC with a 95% CI from resampling cases (2000 resamples).
 
-**Inspectors** (score = suspicion, higher = more likely wrong; calibrated on 100 clean reference cases, tested on disjoint cases)
-| name | sees the image? | what it does |
-|---|---|---|
-| `blind` | no | robust z-score of mask volume only (analogue of a text-only baseline) |
-| `edge` | yes | mean image gradient on the mask boundary, deviation from normal in either direction |
-| `components` | no | number of connected components minus one |
-| `rules` | yes | max(edge, 3 x components) |
-| `vlm` | yes | Qwen2.5-VL-3B-Instruct (local, bf16, Apple M4/MPS) sees 3 orthogonal slices with the red outline, answers YES/NO; score = log P(NO) - log P(YES) |
+## Result (AUROC, damaged vs clean; 0.5 = chance)
+![which damage does each check catch](results/main_figure.png)
 
-## Results (AUROC, corrupted vs clean; 0.5 = chance)
-
-Classical inspectors, full test set (160 cases), 2 different reference/test splits (seeds 1 and 2); ranges are min-max over splits and severities, splits differ by up to about 0.07:
-
-| error | blind | edge | components | rules |
-|---|---|---|---|---|
-| erode (s1-3) | 0.99-1.00 | 0.99-1.00 | 0.73-0.98 | 0.99-1.00 |
-| dilate (s1-3) | 0.95-1.00 | 0.68-0.87 | 0.47-0.48 | 0.66-0.85 |
-| shift (s1-3) | 0.50 | 0.58-0.72 | 0.50 | 0.56-0.70 |
-| drop_slab (s1-3) | 0.49-0.75 | 0.48-0.63 | 0.50 | 0.48-0.62 |
-| spurious_blob (s1-3) | 0.50-0.63 | 0.48-0.54 | 0.90-0.97 | 0.90-0.96 |
-
-Reading: each error type has a different "detector that sees it". Volume-only catches size changes but is blind (0.50) to a shifted mask or an extra island, because the volume does not change. Connected components catch islands only. Boundary edge catches shifts only partially. **Subtle errors (small shifts, a thin slab missing) are caught by nothing here** (best AUROC about 0.7). A real QC system needs several inspectors plus the error taxonomy.
-
-VLM inspector, 100 clean vs 60 per (error, severity 2 and 3), same items as the baselines:
-
-| error | vlm s2 | vlm s3 | best classical s3 |
+| error | Dice | volume only | image check |
 |---|---|---|---|
-| dilate | 0.39 | 0.45 | 1.00 (blind) |
-| drop_slab | 0.42 | 0.49 | 0.70 |
-| erode | 0.40 | 0.27 | 1.00 |
-| shift | 0.49 | 0.50 | 0.73 |
-| spurious_blob | 0.47 | 0.48 | 0.88 (combined) |
+| wrong size | 0.9 | 0.70 (0.64-0.77) | 0.74 (0.69-0.80) |
+| wrong size | 0.8 | 0.96 (0.94-0.98) | 0.88 (0.84-0.91) |
+| shift | 0.9 | 0.49 (0.47-0.51) | 0.56 (0.51-0.62) |
+| shift | 0.8 | 0.49 (0.47-0.51) | 0.72 (0.66-0.77) |
+| extra island | 0.9 | 0.75 (0.69-0.81) | 1.00 (1.00-1.00) |
+| extra island | 0.8 | 0.96 (0.93-0.98) | 1.00 (1.00-1.00) |
 
-**The 3B VLM is not a usable inspector in this zero-shot setup.** It answered NO on 100% of the 700 images; scores per group differ by <0.1 around 0.75 (clean 0.77 +/- 0.10). The answer format is fine (99% of probability mass on YES/NO), so this is not a parsing problem.
+All numbers: `results/main_auroc.csv`, side table with the parts of the image check and the first-round one-sided edge check included.
 
-Prompt sensitivity (3 wordings, 60 clean + 30 per error at severity 3; `results/prompt_sensitivity_*.csv`): AUROC stays at or below chance for almost every error under all three prompts (0.20-0.53), and item-level scores correlate only weakly between prompts (Spearman 0.23-0.57). So the wording changes the ranking more than the image does. Eroded masks are scored as *more* acceptable (AUROC 0.20-0.37), the opposite of useful.
+## What it means
+1. **A volume check is blind to a shifted mask** (0.49 at both sizes): shifting does not change the volume. It finds anything that does change the volume enough.
+2. **A shift of Dice 0.9 is caught by nothing here**: the best check reaches 0.56 (CI 0.51-0.62), and the one-sided edge check 0.64.
+3. **The image check's connected-pieces part finds the island perfectly, but this is nearly by construction**: the island is placed away from the structure, so it is always a separate piece. An extra region that touches the structure was not tested and would not be found this way.
+4. **Which direction of the edge signal matters depends on the error.** The first-round one-sided version (weak edge = suspicious) is better on shift (0.64 / 0.77) and island, the two-sided version is better on wrong size (0.74 / 0.88 against 0.55 / 0.64). No single edge rule covers all errors.
+5. All eight predictions in DESIGN.md (fixed before the run) were confirmed (`results/main_predictions.csv`). They were fairly safe predictions; A5 (image check below volume on wrong size at Dice 0.8) is 0.88 against 0.96.
 
-## Things that went wrong or were changed (kept honest)
-- The first edge detector assumed "weak boundary edge = suspicious". On real MRI that is wrong for `dilate` (AUROC 0.10-0.25): the gradient keeps rising 1-3 voxels *outside* the labelled boundary (mean 0.101 at 0, 0.115 at +3), because the hippocampus touches strong edges (CSF, neighbouring structures). I changed `edge` to two-sided and kept the old one as `edge_signed` in the results. This choice was made after seeing the test numbers, so the splits are not fully independent evidence; the pool is only 260 cases.
-- `spurious_blob` is nearly invisible to the VLM by construction: the three slices go through the mask centre and usually do not cut the island. A human reviewer looking at the same picture would also miss it.
-- Synthetic-noise errors are not real annotator errors. Next step would be to hand-check the top-N alarms on unmodified data.
+## A zero-shot VLM, from the first round (no new runs)
+A local Qwen2.5-VL-3B was shown three MRI slices with the mask outline and asked YES/NO whether the outline is correct. It answered NO on 700 of 700 images, AUROC 0.27-0.50, and the item ranking changed with the wording (Spearman 0.23-0.57 between three prompts). In that round the damage sizes were set in voxels (very uneven difficulty) and the slices did not show a distant island. So this says "not usable as set up", not "VLMs cannot do this". Scripts: `run_vlm.py`, `run_prompt_sens.py`, results `results/vlm_*`, `results/prompt_sensitivity_*`.
 
-## Not done / limits
-- Only the 3B model was tested. A 7B model (about 16 GB download) or a medical VLM may do better; not tried.
-- No longitudinal part (needs ADNI/OASIS access). Second domain (road damage, e.g. RDD2022) not started and its availability is not verified.
-- VLM subsample: 700 images, one seed.
+## Limits
+- One small dataset (crops about 35 x 50 x 35 voxels, 1 mm); damage is synthetic and its size (Dice) is not matched to real annotator disagreement, which was not measured.
+- All 260 cases were used in the first round, where the edge check was changed to two-sided after looking at results. No other labelled data exist, so the test is not fully clean; the check definitions, damage method and seeds were fixed before this run and nothing was tuned on cases 100-259.
+- Only two simple checks; no learned model finished (an unfinished CNN attempt is in `archive/unfinished_cnn/`, with no results used here).
+- The slight volume change from shifting (-3%) gives the volume check a little signal; it stayed at 0.49.
+
+## Files
+- `audit/damage.py` damage at a target Dice; `audit/detectors.py` the checks; `audit/load_msd.py`; `audit/overlay.py`
+- `pilot_damage.py` (P1/P2 pilot), `run_main.py` (the main experiment)
+- First round, kept for the record: `run_synthetic.py`, `run_msd.py`, `run_vlm.py`, `run_prompt_sens.py`, `audit/corrupt.py`, `audit/evaluate.py`, `audit/synth.py`, `audit/vlm.py`
+- `archive/` shelved design and the unfinished CNN
 
 ## Reproduce
 ```
-python3 run_synthetic.py              # sanity check, no downloads
-python3 run_msd.py 0                  # classical inspectors on MSD (seed = split)
-python3 run_vlm.py --n_bad 60         # VLM vs baselines (needs the model, ~1.5 s/image on M4)
-python3 run_prompt_sens.py            # prompt sensitivity
+# data: Task04_Hippocampus.tar (MSD) extracted into data_raw/msd_hippocampus/
+python3 pilot_damage.py      # does the damage hit the Dice targets? (cases 0-59)
+python3 run_main.py          # main experiment, about 50 s
 ```
-Data goes in `data_raw/msd_hippocampus/` (Task04_Hippocampus.tar from the MSD AWS mirror). The model is cached by Hugging Face; delete `~/.cache/huggingface/hub/models--Qwen--Qwen2.5-VL-3B-Instruct` when no longer needed (7.5 GB).
+Requires numpy, scipy, pandas, scikit-learn, matplotlib, nibabel, Pillow. The VLM scripts also need torch, transformers and torchvision, plus the model (about 7.5 GB; delete `~/.cache/huggingface/hub/models--Qwen--Qwen2.5-VL-3B-Instruct` when no longer needed).

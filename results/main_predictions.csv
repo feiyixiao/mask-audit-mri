@@ -1,0 +1,9 @@
+prediction,confirmed
+"A1 volume, size, D0.8 >= 0.8",True
+"A2 volume, shift D0.9 in [0.4,0.6]",True
+"A2 volume, shift D0.8 in [0.4,0.6]",True
+"A3 image, island D0.9 >= 0.8",True
+"A3 image, island D0.8 >= 0.8",True
+"A4 image, shift D0.8 in [0.6,0.8]",True
+"A5 image < volume, size D0.8",True
+A6 shift D0.9 both < 0.7,True

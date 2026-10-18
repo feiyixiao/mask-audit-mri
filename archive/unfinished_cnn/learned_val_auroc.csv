@@ -1,0 +1,8 @@
+model,seed,best_val_auroc
+all,0,0.5720000000000001
+shuffled_labels,0,0.5105000000000001
+without_erode,0,0.55
+without_dilate,0,0.584375
+without_shift,0,0.58125
+without_drop_slab,0,0.526875
+without_spurious_blob,0,0.5393749999999999
