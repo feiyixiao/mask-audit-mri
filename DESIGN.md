@@ -46,6 +46,21 @@ One paragraph on the VLM from the first round, **no new runs**: local Qwen2.5-VL
 2. One full run on the test cases.
 3. Table, figure, README, push to the private repo.
 
+## Addendum (written before any VLM run on the new damage): the VLM as a third check
+Why: a VLM check is the original point of the demo; the first-round VLM test used voxel-sized damage with very uneven difficulty and views that could not show a distant island, so it does not answer the question. The two-check main result above is unchanged and already final.
+- **Same items as the main run**: test cases 100-259, one clean and six damaged versions (3 errors x Dice 0.9 / 0.8) per case, same damage seeds. Score = log P(NO) - log P(YES) at the first answer token, so no text parsing.
+- **Model**: local Qwen2.5-VL-3B, zero-shot, one main prompt fixed now (the first-round prompt: "does the red outline correctly follow the boundary of one complete hippocampus? Answer YES or NO", plus one sentence describing the new fourth panel: "The fourth panel shows the mask alone, projected along one axis."). A second wording on a 40-case subset only, to measure prompt sensitivity. No other prompts will be tried.
+- **Views**: three orthogonal slices through the centroid of the largest connected piece of the shown mask (what a reviewer would pick; no knowledge of where the damage is), plus one panel with the mask projected along one axis (so a distant island is visible).
+- **Pilot first** (cases 0-59, 20 clean + 20 damaged per error x size): checks that the output format is stable (>= 95% of probability on YES/NO) and the speed. It does not decide whether the test run happens: the test run happens regardless, because "does the VLM work" needs a test answer. The pilot only decides whether a larger model is tried (see below).
+- **Predictions (fixed now)**
+  - V1. The 3B VLM is not useful: AUROC < 0.7 on all six (error, Dice) settings.
+  - V2. Where it is best is the extra island at Dice 0.8 (the largest, most visible damage).
+  - V3. Prompt agreement stays low: Spearman between the two wordings < 0.6.
+  - V4. It does not beat the best of the two simple checks on any setting.
+- **Decision rule, fixed now**: if the VLM reaches AUROC >= 0.8 with the CI lower bound above 0.5 on any setting, report it as useful for that error. If it stays < 0.7 everywhere, report "not usable zero-shot at 3B" and stop; a 7B model (about 5-16 GB download, needs the user's go-ahead) is tried only if the 3B shows some signal (CI lower bound > 0.5 on at least 2 settings).
+- Cost: about 1120 images x ~2 s for the main prompt (about 40 minutes) plus about 280 for the second wording.
+- Limits that stay: zero-shot only, no fine-tuning, one small dataset, synthetic damage.
+
 ## Not in this version (shelved in `archive/DESIGN_v2_shelved.md`)
 Learned CNN inspector and held-out error types, prompt-sensitivity re-runs, the slab error, a locked third data split, the check on unmodified labels, a second dataset, a larger VLM.
 

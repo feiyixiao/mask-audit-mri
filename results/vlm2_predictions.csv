@@ -1,0 +1,5 @@
+prediction,confirmed
+V1 VLM < 0.7 on all six settings,True
+V2 best VLM setting is island at Dice 0.8,False
+V3 prompt agreement Spearman < 0.6,False
+V4 VLM never beats the best simple check,True
