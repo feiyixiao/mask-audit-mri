@@ -61,6 +61,47 @@ Why: a VLM check is the original point of the demo; the first-round VLM test use
 - Cost: about 1120 images x ~2 s for the main prompt (about 40 minutes) plus about 280 for the second wording.
 - Limits that stay: zero-shot only, no fine-tuning, one small dataset, synthetic damage.
 
+## Step 0 diagnostics (after the VLM was at chance; written before running; cases 0-29 only, test cases untouched)
+Question: *why* is the zero-shot VLM at chance? Four small tests, same model, same four-panel view, same main prompt unless stated. 30 cases each; AUROC with a case-bootstrap CI.
+- **D1 difficulty ladder.** Each error at Dice 0.9, 0.8, 0.6, 0.4 (as far as the method can reach; achieved Dice is reported) plus **"wrong mask"**: the mask of a different case placed on this image. Question: can it detect even a grossly wrong outline?
+- **D2 outline control.** The same slices with the red outline removed (and a blank projection panel) against the same slices with the correct outline, main question. Question: does the answer depend on the outline at all?
+- **D3a counting.** Only the projection panel; "How many separate white shapes are there? Answer with one digit." Clean (1 piece) against extra island at Dice 0.9 / 0.8 / 0.6; score = log P("2") - log P("1"). Question: can it perceive a separate piece?
+- **D3b outline perception.** One slice with and without the outline; "Is there a red line in this image? Answer YES or NO." Question: can it see a thin red line at all?
+Predictions (fixed now): P1 wrong-mask AUROC < 0.8; P2 counting AUROC >= 0.8 at island Dice 0.8; P3 D2 outline vs no outline AUROC < 0.6 (the answer ignores the outline); P4 D3b >= 0.9 (it can see the line).
+Branches, fixed now: (a) wrong-mask AUROC < 0.65 and D2 < 0.6 -> it does not use the outline for this question: stop prompting variants of this question, go to the "recognise what is inside the box" use or to a trained probe. (b) wrong-mask >= 0.8 but Dice 0.9/0.8 < 0.7 -> it sees gross errors only: try targeted questions and a few worked examples, then a probe. (c) anything in between: report as unclear and run D1 again with more cases. All tuning from here on uses cases 0-99 only; the test cases have already been scored by the VLM twice and will be used once more at the very end, said so in the report.
+
+## Step 0 results (cases 0-29, n = 30 per side, wide intervals) and the departure from the pre-set rule
+It sees the thin red line (AUROC 1.00), its answer depends on the outline (0.83), it ranks an extra island by counting shapes in the projection panel (0.91-0.93 even at Dice 0.9) but its argmax always says "1"; it does **not** judge outline quality (wrong-case mask 0.63; wrong size flat 0.57-0.59; shift only 0.69 at Dice 0.4; island only from Dice 0.6). Predictions P1, P2, P4 confirmed, P3 refuted. The pre-set rule gave branch (c) ("rerun D1 with more cases"); the intervals already exclude (a) (outline-distinguishability lower bound 0.70) and (b) (wrong-mask upper bound 0.74), so rerunning would only narrow them. **Departure, stated openly:** go straight to the action planned for "sees but cannot judge".
+
+## Step 1: targeted questions (design, not yet run)
+Idea: the one-size question "is the outline correct?" fails, but a perception question that matches one error ("how many separate shapes?") works. Test whether a matched question per error gives a useful check, and whether it adds anything to the simple checks.
+
+**Pictures.** Questions about size and shift use the strip of the three MRI slices with the outline (first three panels of the four-panel view, no projection panel). The count question uses the projection panel alone, as in step 0.
+
+**Questions, wording fixed now** (each answer is YES/NO; suspicion = log P(NO) - log P(YES). Preface for S1, S2, H1, H2: "The picture shows three slices of a brain MRI side by side. The red line is meant to outline one structure (the hippocampus).")
+- S1 (too small): "Is the whole structure inside the red line, with no part of it sticking out beyond the line? Answer with exactly one word: YES or NO."
+- S2 (too big): "Does the red line follow the edge of the structure closely, with no extra background included inside the line? Answer with exactly one word: YES or NO."
+- H1 (shift): "Is the red line centered on the structure, not displaced to one side? Answer with exactly one word: YES or NO."
+- H2 (shift, alternative): "Does the red line lie exactly on top of the structure it is meant to outline? Answer with exactly one word: YES or NO."
+- C (island): the step-0 counting question on the projection panel; score = log P("2") - log P("1").
+No other wordings will be tried.
+
+**Matched score per error.** wrong size = max(z(S1), z(S2)); shift = z(H) for the wording chosen on the dev cases; island = z(C). z = (score - mean) / sd over the clean items of the dev cases (so the scales are comparable).
+
+**Dev (cases 30-69, 40 cases; cases 0-29 were used in step 0).** Clean + 3 errors x Dice 0.9 / 0.8 = 7 versions per case, 5 calls each (S1, S2, H1, H2, C): about 1400 calls, 45-50 min. Uses: (1) pick H1 or H2 for shift, the only choice made on dev; (2) clean-item mean and sd for z; (3) a question-by-error AUROC matrix to see whether questions are specific.
+**Test (cases 100-259, evaluated once, with the wording frozen).** The same 160 cases and damage as `run_main.py` / `run_vlm_main.py`; 4 calls per item (S1, S2, chosen H, C), about 4500 calls, about 2.5 h in the background (a 100-case version would take about 1.6 h). The test cases were already scored by the VLM twice (first round and the main run); this is the third use and the report says so.
+
+**What is reported.** (1) AUROC with a case-bootstrap 95% CI per matched question and error; (2) the question-by-error matrix (specificity); (3) complementarity: z-score the volume check and the image check with the clean cases 0-99, take the max, and compare the AUROC of "simple checks only" with "simple checks + matched VLM score" per error and Dice, with a bootstrap CI on the difference.
+
+**Predictions (fixed now; my expectation is that this only helps for the island)**
+- T1. Island (count): AUROC >= 0.85 at Dice 0.9 and 0.8.
+- T2. Wrong size: matched score AUROC < 0.70 at Dice 0.8.
+- T3. Shift: matched score AUROC < 0.65 at Dice 0.9.
+- T4. No matched VLM score beats the best simple check on any setting.
+- T5. Adding the VLM score to the simple checks raises AUROC by less than 0.03 for size and for shift.
+**Decision rules (fixed now).** A question "works" if AUROC >= 0.7 with the CI lower bound above 0.5 at Dice 0.9 for its error. If neither the size nor the shift question works on the test: stop prompting; a few worked examples are tried **only if** on dev at least one of them reached AUROC >= 0.6 (some signal); otherwise go to the trained probe on the model's internal representation (separate design). If one works: say so and report the complementarity result.
+**Limits that stay.** One 3B model, zero-shot; the questions assume the structure looks dark grey in these crops (it does in the examples I looked at, not checked on all cases); the count question works only for an extra piece that is separate from the structure.
+
 ## Not in this version (shelved in `archive/DESIGN_v2_shelved.md`)
 Learned CNN inspector and held-out error types, prompt-sensitivity re-runs, the slab error, a locked third data split, the check on unmodified labels, a second dataset, a larger VLM.
 

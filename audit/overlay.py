@@ -18,7 +18,7 @@ def _panel(slice2d, mask2d):
     return im.resize((PANEL, PANEL), Image.NEAREST)
 
 
-def render_v2(img, mask):
+def render_v2(img, mask, outline=True):
     """Three orthogonal slices through the centroid of the largest connected piece of the mask
     (what a reviewer would pick; no knowledge of where any damage is) + one panel showing the
     mask alone, projected along axis 0, so a distant extra piece is visible."""
@@ -29,12 +29,13 @@ def render_v2(img, mask):
     else:
         big = mask
     c = [int(round(x)) for x in ndi.center_of_mass(big)] if big.any() else [s // 2 for s in img.shape]
+    shown = mask if outline else np.zeros_like(mask)   # outline=False: same slices, no red line, blank projection
     panels = [
-        _panel(img[c[0], :, :], mask[c[0], :, :]),
-        _panel(img[:, c[1], :], mask[:, c[1], :]),
-        _panel(img[:, :, c[2]], mask[:, :, c[2]]),
+        _panel(img[c[0], :, :], shown[c[0], :, :]),
+        _panel(img[:, c[1], :], shown[:, c[1], :]),
+        _panel(img[:, :, c[2]], shown[:, :, c[2]]),
     ]
-    proj = mask.any(axis=0)
+    proj = shown.any(axis=0)
     g = (proj * 255).astype(np.uint8)
     panels.append(Image.fromarray(np.stack([g, g, g], -1)).resize((PANEL, PANEL), Image.NEAREST))
     out = Image.new("RGB", (PANEL * 4 + 12, PANEL), (0, 0, 0))

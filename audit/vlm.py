@@ -42,3 +42,17 @@ class VLMInspector:
 
     def __call__(self, img, mask):
         return self.score_image(render(img, mask))[0]
+
+    @torch.no_grad()
+    def score_tokens(self, pil_img, prompt, pos, neg):
+        """log P(pos) - log P(neg) at the first answer token for any two sets of answer strings."""
+        tok = self.processor.tokenizer
+        ids = lambda words: sorted({tok.convert_tokens_to_ids(w) for w in words})
+        pos_ids, neg_ids = ids(pos), ids(neg)
+        assert tok.unk_token_id not in pos_ids + neg_ids, "answer string is not a single token"
+        messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}]
+        text = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+        inputs = self.processor(text=[text], images=[pil_img], return_tensors="pt").to(self.device)
+        logp = torch.log_softmax(self.model(**inputs).logits[0, -1].float(), dim=-1)
+        lp, ln = torch.logsumexp(logp[pos_ids], 0), torch.logsumexp(logp[neg_ids], 0)
+        return float(lp - ln), float(lp.exp() + ln.exp())
